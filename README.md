@@ -60,5 +60,26 @@ Validation uses **k-fold cross-validation**; we **tune the classification thresh
 - **Targeted supports** for high-poverty districts and those with large **funding gaps** are likely to improve outcomes.  
 - Because drivers differ across regions, **state/region-specific** strategies (not national uniform rules) are most promising.
 
-## License
-Add an OSI license (e.g., MIT) at the repository root under `LICENSE`.
+# Citations
+Dey, N. (2021). Resource and performance: Investigating the relationship between school
+resource quality and student math achievement using PISA data. New England College.
+Retrieved from
+https://www.nec.edu/wp-content/uploads/Dey-Resource-and-Performance_2021.pdf
+25
+
+McMahon, W. W. (2000). The impact of school resources on the learning of inner city children.
+Journal of Education Finance, 25(4), 463–475. Retrieved from https://eric.ed.gov/?id=EJ598987
+The Commonwealth Institute. (2023). Unequal opportunities: Fewer resources, worse outcomes
+for students in schools with concentrated poverty. Retrieved from
+https://thecommonwealthinstitute.org/tci_research/unequal-opportunities-fewer-resources-worseoutcomes-for-students-in-schools-with-concentrated-poverty/
+
+Reardon, S. F., Ho, A. D., Shear, B. R., Fahle, E. M., Kalogrides, D., & Saliba, J. (2022). Trends
+in academic achievement across the U.S.: 2009 to 2019 (CEPA Working Paper No. 22-02).
+Stanford Center for Education Policy Analysis. Retrieved from
+https://cepa.stanford.edu/sites/default/files/wp22-02-v102022.pdf
+
+Gautam, R., McCombs, L., & Pennington, M. (2024). Exploring educational equity in Georgia:
+A machine learning analysis of K–12 achievement disparities. arXiv preprint arXiv:2402.01710.
+https://arxiv.org/abs/2402.01710
+
+# Please feel free to go through our research paper as well as the slides for the visualizations and indepth analysis of our findings
