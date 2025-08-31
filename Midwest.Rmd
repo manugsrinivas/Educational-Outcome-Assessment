@@ -1,0 +1,634 @@
+---
+title: "District Data Set"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(readr)
+library(tidyr)
+library(tidyverse) 
+library(caret)    
+library(MASS)   
+library(car)   
+library(pROC)        
+library(randomForest)
+library(pdp) 
+library(gbm)
+library(e1071)
+```
+
+```{r}
+Data <- read_csv("DistrictData.csv")
+```
+# CLEANING
+
+```{r}
+# Removing the NA's
+Data <- na.omit(Data)
+
+# INSERT YOUR REGION HERE
+Midwest <- c("IN","IL","MI","OH","WI","IA","NE","KS","ND","MN","SD","MO")
+```
+
+```{r}
+# Removing Year, leaid, District, State Name
+Data <- Data[-c(1:4)]
+# Make copy
+df <- Data
+```
+
+```{r}
+# copy
+df_midwest <- Data
+
+df_midwest <- df %>% 
+  filter(stabbr %in% Midwest)
+
+df_midwest <- df_midwest %>%
+  mutate(class_outcome = factor(ifelse(outcomegap > 0, "Above", "Below"),
+                                levels = c("Below", "Above")))
+
+# Making State a factor
+df_midwest$stabbr <- factor(df_midwest$stabbr)
+str(df_midwest)
+```
+
+```{r}
+#Bar Plot of Average Outcome Gap by State
+# Compute the average outcome gap for each state in the midwestern region
+state_summary <- df_midwest %>%
+  group_by(stabbr) %>%
+  summarize(avg_outcomegap = mean(outcomegap, na.rm = TRUE),
+            n = n()) %>%
+  ungroup()
+
+# Create a bar plot showing the average outcome gap per state.
+# A horizontal dashed red line at 0 indicates the national average.
+ggplot(state_summary, aes(x = reorder(stabbr, avg_outcomegap), y = avg_outcomegap)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = round(avg_outcomegap, 2)), vjust = ifelse(state_summary$avg_outcomegap >= 0, -0.5, 1.5), size = 3.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Average Outcome Gap by Mid-western State",
+       subtitle = "Red dashed line indicates the national average (0 SD)",
+       x = "State",
+       y = "Average Outcome Gap (SD)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14))
+
+
+# Outcome Gap Distribution
+ggplot(df, aes(x = outcomegap)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "black") +
+  labs(title = "Distribution of Outcome Gap",
+       x = "Outcome Gap",
+       y = "Frequency")
+
+# Relationship between the resource variable (fundinggap) and outcome gap
+ggplot(df, aes(x = fundinggap, y = outcomegap)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Outcome Gap vs. Funding Gap",
+       x = "Funding Gap",
+       y = "Outcome Gap")
+
+# Demographic predictor relationship and percentage of students in poverty (pov)
+ggplot(df, aes(x = pov, y = outcomegap)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Outcome Gap vs. Poverty Rate",
+       x = "Poverty Rate",
+       y = "Outcome Gap")
+
+# Histogram of the outcome gap in mid-western districts
+ggplot(df_midwest, aes(x = outcomegap)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "black") +
+  labs(title = "Distribution of Outcome Gap (Mid-Western Districts)",
+       x = "Outcome Gap (Test Score Difference, SD)",
+       y = "Frequency")
+
+# Scatter plot: fundinggap vs. outcomegap
+ggplot(df_midwest, aes(x = fundinggap, y = outcomegap)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Funding Gap vs. Outcome Gap (Mid-Western Districts)",
+       x = "Funding Gap (Actual - Required Spending Per-Pupil)",
+       y = "Outcome Gap")
+
+# Boxplot: Enrollment across performance classes
+ggplot(df_midwest, aes(x = class_outcome, y = log(enroll))) +
+  geom_boxplot(fill = "lightgreen") +
+  labs(title = "Log Enrollment by Performance Category",
+       x = "Performance Category",
+       y = "Log Enrollment")
+
+
+```
+
+# ell is not as important here likely because of the lack of languistic diversity in the midwest
+
+```{r}
+# Full model 
+model_full <- glm(class_outcome ~ fundinggap + enroll + pov + iep + ell +
+                    amind + asian + black + hisp + multi + pac,
+                  data = df_midwest,
+                  family = binomial)
+summary(model_full)
+```
+
+```{r}
+# Stepwise model selection (using AIC)
+model_step <- stepAIC(model_full, direction = "both")
+summary(model_step)
+
+# the default diagnostic plots 
+par(mfrow = c(2, 2))
+plot(model_step)
+par(mfrow = c(1, 1))
+
+```
+
+
+```{r}
+set.seed(123) 
+train_index <- createDataPartition(df_midwest$class_outcome, p = 0.7, list = FALSE)
+train_midwest <- df_midwest[train_index, ]
+test_midwest  <- df_midwest[-train_index, ]
+
+# The final model on the training set using the formula from the stepwise selection so we've proven they are necessary predictors yadayadaya
+model_final <- glm(formula(model_step), data = train_midwest, family = binomial)
+summary(model_final)
+
+#Test set
+# Predicted probabilities and class predictions on the test set.
+test_midwest <- test_midwest %>%
+  mutate(pred_prob = predict(model_final, newdata = test_midwest, type = "response"),
+         pred_class = factor(ifelse(pred_prob > 0.5, "Above", "Below"),
+                             levels = c("Below", "Above")))
+
+# Confusion matrix.
+conf_mat <- confusionMatrix(test_midwest$pred_class, test_midwest$class_outcome)
+print(conf_mat)
+```
+# Classification
+
+```{r}
+# omit the "white" category to avoid multicollinearity  ( used it as a base ) - was auto done before
+# Logistic regression model
+full_formula <- class_outcome ~ fundinggap + enroll + pov + iep + ell +
+                            amind + asian + black + hisp + multi + pac
+
+# logistic regression model based off of the training data
+model_full <- glm(full_formula, data = train_midwest, family = binomial)
+summary(model_full)
+
+# Stepwise again - just in case ig
+model_step <- stepAIC(model_full, direction = "both")
+summary(model_step)
+
+
+#Diagnostic plots
+par(mfrow = c(2, 2))
+plot(model_step)
+par(mfrow = c(1, 1))  
+
+# Check for multicollinearity(just in case):
+vif_values <- vif(model_step)
+print(vif_values)
+
+
+```
+
+Check How accurate the model is in classifying
+
+```{r}
+
+# Using the stepwise-selected model to predict on the test set.
+test_midwest <- test_midwest %>%
+  mutate(pred_prob = predict(model_step, newdata = test_midwest, type = "response"),
+         pred_class = factor(ifelse(pred_prob > 0.5, "Above", "Below"),
+                             levels = c("Below", "Above")))
+
+# Confusion matrix to compare predicted vs. actual classifications.
+conf_mat <- confusionMatrix(test_midwest$pred_class, test_midwest$class_outcome)
+print(conf_mat)
+
+```
+```{r}
+
+# Cross-Validation for Threshold Optimization (Logistic Model)
+
+thresholds <- seq(0.3, 0.7, by = 0.05)
+set.seed(123)
+folds <- createFolds(train_midwest$class_outcome, k = 10, list = TRUE, returnTrain = FALSE)
+
+cv_accuracy <- sapply(thresholds, function(thresh) {
+  fold_acc <- sapply(folds, function(idx) {
+    training_fold <- train_midwest[-idx, ]
+    validation_fold <- train_midwest[idx, ]
+    
+    mod_fold <- glm(formula(model_step), data = training_fold, family = binomial)
+    pred_prob_fold <- predict(mod_fold, newdata = validation_fold, type = "response")
+    pred_class_fold <- factor(ifelse(pred_prob_fold > thresh, "Above", "Below"),
+                              levels = c("Below", "Above"))
+    mean(pred_class_fold == validation_fold$class_outcome)
+  })
+  mean(fold_acc)
+})
+
+cv_results <- data.frame(Threshold = thresholds, CV_Accuracy = cv_accuracy)
+print(cv_results)
+
+best_threshold <- cv_results$Threshold[which.max(cv_results$CV_Accuracy)]
+cat("Optimal Threshold based on CV Accuracy:", best_threshold, "\n")
+
+# Evaluate logistic model on test set using the optimal threshold.
+test_midwest <- test_midwest %>%
+  mutate(pred_prob = predict(model_step, newdata = test_midwest, type = "response"),
+         pred_class = factor(ifelse(pred_prob > best_threshold, "Above", "Below"),
+                             levels = c("Below", "Above")))
+conf_mat_logit <- confusionMatrix(test_midwest$pred_class, test_midwest$class_outcome)
+print(conf_mat_logit)
+
+roc_obj_logit <- roc(test_midwest$class_outcome, test_midwest$pred_prob, levels = c("Below", "Above"))
+auc_logit <- auc(roc_obj_logit)
+cat("Logistic Model AUC:", auc_logit, "\n")
+plot(roc_obj_logit, main = "ROC Curve: Logistic Regression", col = "blue")
+
+# Random Forest
+# Train a random forest model using the same formula (excluding state fixed effects cause idk how to do all that)
+set.seed(123)
+rf_model <- randomForest(full_formula, data = train_midwest, ntree = 500, importance = TRUE)
+print(rf_model)
+
+# Random forest predictions (same best threshold from logistic model for comparability)
+rf_pred_prob <- predict(rf_model, newdata = test_midwest, type = "prob")[, "Above"]
+rf_pred_class <- factor(ifelse(rf_pred_prob > best_threshold, "Above", "Below"),
+                        levels = c("Below", "Above"))
+
+conf_mat_rf <- confusionMatrix(rf_pred_class, test_midwest$class_outcome)
+print(conf_mat_rf)
+
+roc_obj_rf <- roc(test_midwest$class_outcome, rf_pred_prob, levels = c("Below", "Above"))
+auc_rf <- auc(roc_obj_rf)
+cat("Random Forest Model AUC:", auc_rf, "\n")
+plot(roc_obj_rf, main = "ROC Curve: Random Forest", col = "darkgreen")
+
+# Plot variable importance for the random forest model
+varImpPlot(rf_model, main = "Random Forest Variable Importance")
+
+
+#Partial Dependence Plots (PDP) for Key Predictors in Random Forest
+
+# PDP for fundinggap – how it affects the probability of being "Above"
+pdp_fundinggap <- partial(rf_model, pred.var = "fundinggap", which.class = 2)
+plotPartial(pdp_fundinggap, main = "Partial Dependence: Funding Gap", xlab = "Funding Gap")
+
+# PDP for pov (poverty rate)
+pdp_pov <- partial(rf_model, pred.var = "pov", which.class = 2)
+plotPartial(pdp_pov, main = "Partial Dependence: Poverty Rate", xlab = "Poverty Rate")
+```
+
+
+```{r}
+# Note: LDA and QDA do not work well with factor predictors.
+# throw out the states and include just the numeric variables
+basic_formula <- class_outcome ~ fundinggap + enroll + pov + iep + ell +
+                           amind + asian + black + hisp + multi + pac
+
+
+# training on 10 fold 
+train_control <- trainControl(method = "cv", number = 10,
+                              classProbs = TRUE, summaryFunction = defaultSummary)
+
+# the models
+set.seed(123) # just in case yk
+# Logistic Regression
+model_glm <- train(basic_formula,
+                   data = train_midwest,
+                   method = "glm",
+                   family = binomial,
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+#Linear Discriminant Analysis (LDA)
+set.seed(123)
+model_lda <- train(basic_formula,
+                   data = train_midwest,
+                   method = "lda",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+# Quadratic Discriminant Analysis (QDA)
+set.seed(123)
+model_qda <- train(basic_formula,
+                   data = train_midwest,
+                   method = "qda",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+# Classification Trees (rpart)
+set.seed(123)
+model_tree <- train(basic_formula,
+                    data = train_midwest,
+                    method = "rpart",
+                    trControl = train_control,
+                    metric = "Accuracy")
+
+# Random Forest
+set.seed(123)
+model_rf <- train(basic_formula,
+                  data = train_midwest,
+                  method = "rf",
+                  trControl = train_control,
+                  metric = "Accuracy")
+
+# Boosting (GBM)
+set.seed(123)
+model_gbm <- train(basic_formula,
+                   data = train_midwest,
+                   method = "gbm",
+                   trControl = train_control,
+                   metric = "Accuracy",
+                   verbose = FALSE)
+
+# Support Vector Machine (Radial Kernel)
+set.seed(123)
+model_svm <- train(basic_formula,
+                   data = train_midwest,
+                   method = "svmRadial",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+# k-Nearest Neighbors (kNN)
+set.seed(123)
+model_knn <- train(basic_formula,
+                   data = train_midwest,
+                   method = "knn",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+
+# Comparing
+results <- resamples(list(GLM = model_glm,
+                          LDA = model_lda,
+                          QDA = model_qda,
+                          Tree = model_tree,
+                          RF = model_rf,
+                          GBM = model_gbm,
+                          SVM = model_svm,
+                          kNN = model_knn))
+summary(results)
+bwplot(results, metric = "Accuracy")
+
+```
+
+```{r}
+# Testing on test data
+model_list <- list(
+  GLM  = model_glm,
+  LDA  = model_lda,
+  QDA  = model_qda,
+  Tree = model_tree,
+  RF   = model_rf,
+  GBM  = model_gbm,
+  SVM  = model_svm,
+  kNN  = model_knn
+)
+
+for(model_name in names(model_list)) {
+  cat("---------", model_name, "---------\n")
+  
+  current_model <- model_list[[model_name]]
+  
+  # Predict probability for class "Above". 
+  # (Assumes that the caret model supports type = "prob"; if not, you may need to adjust.)
+  pred_prob <- predict(current_model, newdata = test_data, type = "prob")[, "Above"]
+  
+  # Use a threshold of 0.5 to classify observations.
+  pred_class <- factor(ifelse(pred_prob > 0.5, "Above", "Below"),
+                       levels = c("Below", "Above"))
+  
+  # Compute the confusion matrix.
+  cm <- confusionMatrix(pred_class, test_data$class_outcome)
+  print(cm)
+  
+  # Compute the ROC curve and AUC.
+  roc_obj <- roc(test_data$class_outcome, pred_prob, levels = c("Below", "Above"))
+  auc_value <- auc(roc_obj)
+  cat(model_name, "AUC:", auc_value, "\n")
+  
+  # Plot the ROC curve.
+  plot(roc_obj, main = paste("ROC Curve:", model_name), col = "blue")
+  
+  cat("\n\n")
+}
+
+```
+
+
+EXTRA QUANTIFICATION
+
+```{r}
+# Making a second version of Data
+Data2 <- Data
+# renaming the column
+Data2 <- Data2 |> rename(
+  pos_outcome = outcomegap)
+
+# Making outcomegap a binary variable
+# True when pos, False when neg
+Data2$pos_outcome <- factor(Data2$pos_outcome > 0)
+Data2
+```
+
+```{r}
+# Regular lm (I know this is a basic example smd)
+summary(lm(outcomegap~., data = Data))
+```
+```{r}
+cor(Data[,-c(1)])
+```
+```{r}
+vif(lm(outcomegap~., data = Data))
+```
+
+
+
+```{r}
+summary(glm(pos_outcome~., family="binomial", data = Data2))
+```
+# K Nearest Neighbors
+
+```{r}
+
+# number of rows
+n <- nrow(Data2)
+# number of rows to be in training set
+t <- n %/% (10/7)
+
+set.seed(52)
+indexes <- sample(1:n)
+
+# Train
+Data2_tr <- Data2[indexes[1:t],]
+# Test
+Data2_te <- Data2[indexes[(t+1):n],]
+
+# Check if there are enough of each group
+table(Data2_tr$stabbr)
+```
+```{r}
+### Training Scaled
+Data2_tr.scale <- scale(Data2_tr[,-c(1,4)])
+
+### Testing Scaled
+Data2_te.scale <- scale(Data2_te[,-c(1,4)])
+```
+
+```{r}
+set.seed(42)
+knn.pred <- knn(
+                 train = Data2_tr.scale, 
+                 test = Data2_te.scale,
+                 cl = Data2_tr$pos_outcome, 
+                 k=10
+                 )
+
+true_outcome <- Data2_te$pos_outcome
+```
+
+
+```{r}
+knn.results <- table(true_outcome, knn.pred)
+knn.results
+```
+```{r}
+#Adding correct predicions
+knn.correct <- knn.results[1,1] + knn.results[2,2]
+knn.false <- knn.results[1,2] + knn.results[2,1]
+knn.correct / sum(knn.results)
+```
+
+```{r}
+confusionMatrix(knn.pred, true_outcome)
+```
+
+# BOOSTING
+
+```{r}
+# Boolean to int
+Data2.int <- Data2
+Data2.int$pos_outcome <- as.integer(Data2.int$pos_outcome) - 1
+```
+
+```{r}
+# Split Data
+set.seed(44)
+indexes <- sample(1:n)
+
+# Train
+Data2.int_tr <- Data2.int[indexes[1:t],]
+# Test
+Data2.int_te <- Data2.int[indexes[(t+1):n],]
+
+# Check if there are enough of each group
+table(Data2.int_tr$stabbr)
+```
+
+```{r}
+misclassification <- c()
+l <- (0:20)/20
+for(lambda in l){
+  set.seed((l*20) + 1)
+  mod <- gbm(pos_outcome~ ., data = Data2.int_tr, distribution = "bernoulli",
+    n.trees = 1000, shrinkage = lambda)
+  
+  boost.pred <- predict(mod, Data2.int_te, n.trees = 1000, type = "response") > .5
+  
+  boost.actual <- Data2.int_te$pos_outcome == 1
+  
+  mis <- 1- mean(boost.actual == boost.pred)
+  
+  misclassification <- c(misclassification,mis)
+  
+}
+
+plot(x=l, y=misclassification, pch = 19,
+     main = "Test  misclassification over different lambdas (Boosting)", 
+     col = "blue", xlab = "Lambda", ylab = "Test Misclassification Error")
+```
+
+```{r}
+mod <- gbm(pos_outcome~ ., data = Data2.int_tr, distribution = "bernoulli",
+    n.trees = 1000, shrinkage = 0.5)
+```
+
+```{r}
+# which lambda had the lowest misclassification
+min_index <- which.min(misclassification)
+best_lambda <- l[min_index]
+best_lambda
+```
+
+```{r}
+set.seed(17)
+mod <- gbm(pos_outcome~ ., data = Data2.int_tr, distribution = "bernoulli",
+    n.trees = 1000, shrinkage = best_lambda)
+```
+
+```{r}
+summary(mod)
+```
+
+```{r}
+# Accuracy
+1 - misclassification[min_index]
+```
+
+```{r}
+confusionMatrix(factor(boost.pred),factor(boost.actual))
+```
+# LOGISTIC REGRESSION
+
+```{r}
+#Model Time!
+Data2
+
+library(ggplot2)
+#Logistic Regression:
+ggplot(data = Data2, aes(x = ppcstot, y = fundinggap)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+logit = glm(pos_outcome ~., data = Data2, family = "binomial" )
+summary(logit)
+plot(logit)
+```
+
+```{r}
+pairs(Data2_tr.scale)
+```
+
+```{r}
+svm(y ~ ., data = dat[train, ], kernel = "radial",
+gamma = 1, cost = 1)
+```
+
+```{r}
+?svm
+```
+
+
+```{r}
+tune.out <- tune(svm, pos_outcome~., data = Data2,
+                 kernel = "radial",
+                 ranges = list(
+                   cost = c(0.1, 1, 10, 100, 1000),
+                   gamma = c(0.5, 1, 2, 3, 4)))
+summary(tune.out)
+```
+
+
+

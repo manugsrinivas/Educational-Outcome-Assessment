@@ -1,0 +1,571 @@
+```{r}
+title: "District Data Set"
+output: html_notebook
+
+```
+
+```{r}
+library(margins)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(tidyverse) 
+library(caret)    
+library(MASS)   
+library(car)   
+library(pROC)        
+library(randomForest) 
+library(pdp)         # partial dependance??? 
+library(gbm)          # For boosting
+library(e1071)        # For SVM
+```
+yap:
+so basically we are testing if a students score is reliant on its surrounding, and would you be able to predict a district average.
+
+
+```{r}
+# Rene's cleaning code
+
+Data <- read_csv("DistrictData.csv")
+# Removing the NA's
+Data <- na.omit(Data)
+# Removing Year, leaid, District, State Name
+Data <- Data[-c(1:4)]
+# took our factor to do later
+# Making a second version of Data
+Data2 <- Data
+# renaming the column
+Data2 <- Data2 |> rename(
+  pos_outcome = outcomegap)
+# Making outcomegap a binary variable
+# True when pos, False when neg
+Data2$pos_outcome <- factor(Data2$pos_outcome > 0)
+str(Data2)
+summary(Data2)
+```
+Experimenting:
+Manu: Northeast: (Connecticut, Maine, Massachusetts, New Hampshire, Rhode Island, Vermont, New Jersey,	 New York, Pennsylvania)
+
+
+```{r}
+df <- Data
+northeast_states <- c("CT", "ME", "MA", "NH", "RI", "VT", "NJ", "NY", "PA")
+# filter
+df_ne <- df %>% 
+  filter(stabbr %in% northeast_states)
+
+df_ne <- df_ne %>% mutate(class_outcome = factor(ifelse(outcomegap > 0, "Above", "Below"), levels = c("Below", "Above")))
+
+# Making State a factor
+df_ne$stabbr <- factor(df_ne$stabbr)
+str(df_ne)
+summary(df_ne)
+```
+
+
+Seeing what we're working with  Plots:
+
+```{r}
+
+#Bar Plot of Average Outcome Gap by State
+# Compute the average outcome gap for each state in the northeastern region
+state_summary <- df_ne %>% group_by(stabbr) %>% summarize(avg_outcomegap = mean(outcomegap, na.rm = TRUE), n = n()) %>% ungroup()
+
+# Create a bar plot showing the average outcome gap per state.
+# A horizontal dashed red line at 0 indicates the national average.
+ggplot(state_summary, aes(x = reorder(stabbr, avg_outcomegap), y = avg_outcomegap)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = round(avg_outcomegap, 2)),
+            vjust = ifelse(state_summary$avg_outcomegap >= 0, -0.5, 1.5),
+            size = 3.5) +  # changed from linewidth
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  labs(title = "Average Outcome Gap by North Eastern States",
+       subtitle = "Red dashed line indicates the national average (0 SD)",
+       x = "State",
+       y = "Average Outcome Gap (SD)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14))  # changed from linewidth
+
+
+
+# Outcome Gap Distribution
+ggplot(df, aes(x = outcomegap)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "black") +
+  labs(title = "Distribution of Outcome Gap",
+       x = "Outcome Gap",
+       y = "Frequency")
+
+# Relationship between the resource variable (fundinggap) and outcome gap
+ggplot(df, aes(x = fundinggap, y = outcomegap)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Outcome Gap vs. Funding Gap",
+       x = "Funding Gap",
+       y = "Outcome Gap")
+
+# Demographic predictor relationship and percentage of students in poverty (pov)
+ggplot(df, aes(x = pov, y = outcomegap)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Outcome Gap vs. Poverty Rate",
+       x = "Poverty Rate",
+       y = "Outcome Gap")
+
+# Histogram of the outcome gap in districts
+ggplot(df_ne, aes(x = outcomegap)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "black") +
+  labs(title = "Distribution of Outcome Gap (NE Districts)",
+       x = "Outcome Gap (Test Score Difference, SD)",
+       y = "Frequency")
+
+# Scatter plot: fundinggap vs. outcomegap
+ggplot(df_ne, aes(x = fundinggap, y = outcomegap)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Funding Gap vs. Outcome Gap (NE Districts)",
+       x = "Funding Gap (Actual - Required Spending Per-Pupil)",
+       y = "Outcome Gap")
+
+# Boxplot: Enrollment across performance classes
+ggplot(df_ne, aes(x = class_outcome, y = enroll)) +
+  geom_boxplot(fill = "lightgreen") +
+  labs(title = "Enrollment by Performance Category",
+       x = "Performance Category",
+       y = "Enrollment")
+
+
+```
+
+
+Question: How do variations in school resources and demographics affect a school's test score performance compared to the national benchmark?
+
+
+
+```{r}
+
+# Full model 
+model_full <- glm(class_outcome ~ fundinggap + enroll + pov + iep + ell +
+                    amind + asian + black + hisp + multi + pac,
+                  data = df_ne,
+                  family = binomial)
+summary(model_full)
+
+# Stepwise model selection (using AIC)
+model_step <- stepAIC(model_full, direction = "both")
+summary(model_step)
+
+# the default diagnostic plots 
+par(mar = c(5, 4, 4, 2) + 0.1)
+plot(model_step)
+par(mfrow = c(1, 1))
+mfx <- margins(model_full)
+summary(mfx)
+```
+
+
+
+Creating ma models:
+
+```{r}
+set.seed(123) 
+train_index <- createDataPartition(df_ne$class_outcome, p = 0.7, list = FALSE)
+train_ne <- df_ne[train_index, ]
+test_ne <- df_ne[-train_index, ]
+
+# The final model on the training set using the formula from the stepwise selection so we've proven they are necessary predictors.
+model_final <- glm(formula(model_step), data = train_ne, family = binomial)
+summary(model_final)
+
+#Test set
+# Predicted probabilities and class predictions on the test set.
+test_ne <- test_ne %>% mutate(pred_prob = predict(model_final, newdata = test_ne, type = "response"),
+         pred_class = factor(ifelse(pred_prob > 0.5, "Above", "Below"),
+                             levels = c("Below", "Above")))
+
+# Confusion matrix.
+conf_mat <- confusionMatrix(test_ne$pred_class, test_ne$class_outcome)
+print(conf_mat)
+```
+
+# Classification
+```{r}
+# omit the "white" category to avoid multicollinearity  ( used it as a base ) - was auto done before
+# Logistic regression model
+full_formula <- class_outcome ~ fundinggap + enroll + pov + iep + ell +
+                            amind + asian + black + hisp + multi + pac
+
+# logistic regression model based off of the training data
+model_full <- glm(full_formula, data = train_ne, family = binomial)
+summary(model_full)
+
+# Stepwise again - just in case ig
+model_step <- stepAIC(model_full, direction = "both")
+summary(model_step)
+
+
+#Diagnostic plots
+par(mar = c(5, 4, 4, 2) + 0.1)  
+plot(model_step)
+par(mfrow = c(1, 1))  
+
+# Check for multicollinearity(just in case):
+vif_values <- vif(model_step)
+print(vif_values)
+
+
+```
+
+Check How accurate it the model in classifying
+
+```{r}
+
+# Using the stepwise-selected model to predict on the test set.
+test_ne <- test_ne %>%
+  mutate(pred_prob = predict(model_step, newdata = test_ne, type = "response"),
+         pred_class = factor(ifelse(pred_prob > 0.5, "Above", "Below"),
+                             levels = c("Below", "Above")))
+
+# Confusion matrix to compare predicted vs. actual classifications.
+conf_mat <- confusionMatrix(test_ne$pred_class, test_ne$class_outcome)
+print(conf_mat)
+
+```
+
+
+```{r}
+
+
+# Cross-Validation for Threshold Optimization (Logistic Model)
+
+thresholds <- seq(0.3, 0.7, by = 0.05)
+set.seed(123)
+folds <- createFolds(train_ne$class_outcome, k = 10, list = TRUE, returnTrain = FALSE)
+
+cv_accuracy <- sapply(thresholds, function(thresh) {
+  fold_acc <- sapply(folds, function(idx) {
+    training_fold <- train_ne[-idx, ]
+    validation_fold <- train_ne[idx, ]
+    
+    mod_fold <- glm(formula(model_step), data = training_fold, family = binomial)
+    pred_prob_fold <- predict(mod_fold, newdata = validation_fold, type = "response")
+    pred_class_fold <- factor(ifelse(pred_prob_fold > thresh, "Above", "Below"),
+                              levels = c("Below", "Above"))
+    mean(pred_class_fold == validation_fold$class_outcome)
+  })
+  mean(fold_acc)
+})
+
+cv_results <- data.frame(Threshold = thresholds, CV_Accuracy = cv_accuracy)
+print(cv_results)
+
+best_threshold <- cv_results$Threshold[which.max(cv_results$CV_Accuracy)]
+cat("Optimal Threshold based on CV Accuracy:", best_threshold, "\n")
+
+# Evaluate logistic model on test set using the optimal threshold.
+test_ne <- test_ne %>%
+  mutate(pred_prob = predict(model_step, newdata = test_ne, type = "response"),
+         pred_class = factor(ifelse(pred_prob > best_threshold, "Above", "Below"),
+                             levels = c("Below", "Above")))
+conf_mat_logit <- confusionMatrix(test_ne$pred_class, test_ne$class_outcome)
+print(conf_mat_logit)
+
+roc_obj_logit <- roc(test_ne$class_outcome, test_ne$pred_prob, levels = c("Below", "Above"))
+auc_logit <- auc(roc_obj_logit)
+cat("Logistic Model AUC:", auc_logit, "\n")
+plot(roc_obj_logit, main = "ROC Curve: Logistic Regression", col = "blue")
+
+# Random Forest
+# Train a random forest model using the same formula (excluding state fixed effects cause idk how to do all that)
+set.seed(123)
+rf_model <- randomForest(full_formula, data = train_ne, ntree = 500, importance = TRUE)
+print(rf_model)
+
+# Random forest predictions (same best threshold from logistic model for comparability)
+rf_pred_prob <- predict(rf_model, newdata = test_ne, type = "prob")[, "Above"]
+rf_pred_class <- factor(ifelse(rf_pred_prob > best_threshold, "Above", "Below"),
+                        levels = c("Below", "Above"))
+
+conf_mat_rf <- confusionMatrix(rf_pred_class, test_ne$class_outcome)
+print(conf_mat_rf)
+
+roc_obj_rf <- roc(test_ne$class_outcome, rf_pred_prob, levels = c("Below", "Above"))
+auc_rf <- auc(roc_obj_rf)
+cat("Random Forest Model AUC:", auc_rf, "\n")
+plot(roc_obj_rf, main = "ROC Curve: Random Forest", col = "darkgreen")
+
+# Plot variable importance for the random forest model
+varImpPlot(rf_model, main = "Random Forest Variable Importance")
+
+
+#Partial Dependence Plots (PDP) for Key Predictors in Random Forest
+
+# PDP for fundinggap – how it affects the probability of being "Above"
+pdp_fundinggap <- partial(rf_model, pred.var = "fundinggap", which.class = 2)
+plotPartial(pdp_fundinggap, main = "Partial Dependence: Funding Gap", xlab = "Funding Gap")
+
+# PDP for pov (poverty rate)
+pdp_pov <- partial(rf_model, pred.var = "pov", which.class = 2)
+plotPartial(pdp_pov, main = "Partial Dependence: Poverty Rate", xlab = "Poverty Rate")
+
+```
+There might be overfitting in random forest??
+
+
+
+
+
+
+
+
+# required models
+
+```{r}
+# Note: LDA and QDA do not work well with factor predictors.
+# throw out the states and include just the numeric variables
+basic_formula <- class_outcome ~ fundinggap + enroll + pov + iep + ell +
+                           amind + asian + black + hisp + multi + pac
+
+
+# training on 10 fold 
+train_control <- trainControl(method = "cv", number = 10,
+                              classProbs = TRUE, summaryFunction = defaultSummary)
+
+# the models
+set.seed(123) # just in case yk
+# Logistic Regression
+model_glm <- train(basic_formula,
+                   data = train_ne,
+                   method = "glm",
+                   family = binomial,
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+#Linear Discriminant Analysis (LDA)
+set.seed(123)
+model_lda <- train(basic_formula,
+                   data = train_ne,
+                   method = "lda",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+# Quadratic Discriminant Analysis (QDA)
+set.seed(123)
+model_qda <- train(basic_formula,
+                   data = train_ne,
+                   method = "qda",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+# Classification Trees (rpart)
+set.seed(123)
+model_tree <- train(basic_formula,
+                    data = train_ne,
+                    method = "rpart",
+                    trControl = train_control,
+                    metric = "Accuracy")
+
+# Random Forest
+set.seed(123)
+model_rf <- train(basic_formula,
+                  data = train_ne,
+                  method = "rf",
+                  trControl = train_control,
+                  metric = "Accuracy")
+
+# Boosting (GBM)
+set.seed(123)
+model_gbm <- train(basic_formula,
+                   data = train_ne,
+                   method = "gbm",
+                   trControl = train_control,
+                   metric = "Accuracy",
+                   verbose = FALSE)
+
+# Support Vector Machine (Radial Kernel)
+set.seed(123)
+model_svm <- train(basic_formula,
+                   data = train_ne,
+                   method = "svmRadial",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+# k-Nearest Neighbors (kNN)
+set.seed(123)
+model_knn <- train(basic_formula,
+                   data = train_ne,
+                   method = "knn",
+                   trControl = train_control,
+                   metric = "Accuracy")
+
+
+# Comparing
+results <- resamples(list(GLM = model_glm,
+                          LDA = model_lda,
+                          QDA = model_qda,
+                          Tree = model_tree,
+                          RF = model_rf,
+                          GBM = model_gbm,
+                          SVM = model_svm,
+                          kNN = model_knn))
+summary(results)
+bwplot(results, metric = "Accuracy")
+
+```
+
+
+
+
+```{r}
+# Testing on test data
+model_list <- list(
+  GLM  = model_glm,
+  LDA  = model_lda,
+  QDA  = model_qda,
+  Tree = model_tree,
+  RF   = model_rf,
+  GBM  = model_gbm,
+  SVM  = model_svm,
+  kNN  = model_knn
+)
+
+for(model_name in names(model_list)) {
+  cat("---------", model_name, "---------\n")
+  
+  current_model <- model_list[[model_name]]
+  
+  # Predict probability for class "Above". 
+  # (Assumes that the caret model supports type = "prob"; if not, you may need to adjust.)
+  pred_prob <- predict(current_model, newdata = test_ne, type = "prob")[, "Above"]
+  
+  # Use a threshold of 0.5 to classify observations.
+  pred_class <- factor(ifelse(pred_prob > 0.5, "Above", "Below"),
+                       levels = c("Below", "Above"))
+  
+  # Compute the confusion matrix.
+  cm <- confusionMatrix(pred_class, test_ne$class_outcome)
+  print(cm)
+  
+  # Compute the ROC curve and AUC.
+  roc_obj <- roc(test_ne$class_outcome, pred_prob, levels = c("Below", "Above"))
+  auc_value <- auc(roc_obj)
+  cat(model_name, "AUC:", auc_value, "\n")
+  
+  # Plot the ROC curve.
+  plot(roc_obj, main = paste("ROC Curve:", model_name), col = "blue")
+  
+  cat("\n\n")
+}
+
+```
+
+
+```{r}
+# Example: Evaluate Overfitting in the Random Forest Model 
+
+# Training performance (out-of-bag error)
+rf_model <- randomForest(basic_formula, data = train_ne, ntree = 500, importance = TRUE)
+print(rf_model)  # Look at the OOB error reported in the model summary.
+
+# Test Set Performance
+rf_pred_prob <- predict(rf_model, newdata = test_ne, type = "prob")[, "Above"]
+rf_pred_class <- factor(ifelse(rf_pred_prob > 0.5, "Above", "Below"), levels = c("Below", "Above"))
+conf_mat_rf <- confusionMatrix(rf_pred_class, test_ne$class_outcome)
+print(conf_mat_rf)
+
+# If the test accuracy is comparable to the OOB and cross-validated accuracy, then the model is likely well-calibrated.
+
+# Learning Curves: Varying training data size to see convergence of error rates
+library(ggplot2)
+train_sizes <- seq(0.1, 1, by = 0.1)
+train_errors <- c()
+cv_errors <- c()
+
+set.seed(123)
+for (frac in train_sizes) {
+  # Sample a fraction of the training data
+  sub_train <- train_ne %>% sample_frac(frac)
+  
+  # Fit the model
+  mod_sub <- randomForest(basic_formula, data = sub_train, ntree = 500)
+  
+  # Training error: here we use OOB error from the random forest
+  train_errors <- c(train_errors, mod_sub$err.rate[500, "OOB"])
+  
+  # Cross-validated error using, say, 5-fold CV on this subtraining set
+  cv_result <- train(basic_formula,
+                     data = sub_train,
+                     method = "rf",
+                     trControl = trainControl(method = "cv", number = 5),
+                     ntree = 500,
+                     metric = "Accuracy")
+  cv_error <- 1 - max(cv_result$results$Accuracy)
+  cv_errors <- c(cv_errors, cv_error)
+}
+
+# Combine results for plotting
+learning_curve <- data.frame(Train_Size = train_sizes,
+                             OOB_Error = train_errors,
+                             CV_Error = cv_errors)
+
+# Plot learning curves
+ggplot(learning_curve, aes(x = Train_Size)) +
+  geom_line(aes(y = OOB_Error, color = "OOB Error")) +
+  geom_line(aes(y = CV_Error, color = "CV Error")) +
+  labs(title = "Learning Curves for Random Forest Model",
+       x = "Fraction of Training Data",
+       y = "Error Rate") +
+  scale_color_manual(name = "Error Type", values = c("OOB Error" = "blue", "CV Error" = "red")) +
+  theme_minimal()
+
+```
+Out-of-Bag (OOB) Error & Training Performance
+Number of Trees and Variables:
+The model was built with 500 trees, and at each split, 3 variables were considered. This is standard for random forests and helps in reducing variance.
+
+OOB Error:
+The reported OOB error is 10.34%. This is the error estimate calculated internally by the random forest using the observations not included in each bootstrap sample. An OOB error of 10.34% suggests that, on average, the model misclassifies about 10.34% of the training instances.
+
+Training Confusion Matrix Details:
+
+For the "Below" class:
+Out of the observations, 705 were correctly classified as “Below” with a misclassification (class.error) of about 14.23%.
+
+For the "Above" class:
+3871 were correctly predicted as “Above”, but 384 were misclassified, resulting in an error rate of around 9.025%.
+This difference indicates that the model has a bit more difficulty accurately classifying the “Above” class compared to “Below.”
+
+Test Set Performance (Using Caret's Confusion Matrix)
+Overall Accuracy:
+The test set accuracy is 90.13% with a 95% confidence interval ranging from 89.28%, 90.94%. This is substantially higher than the No Information Rate (78.55%), indicating that your model performs much better than a naive classifier that always picks the most common class.
+
+Kappa Statistic:
+With a Kappa of 0.6785, there is strong agreement between your predictions and actual labels, after accounting for chance agreement.
+
+Class-Specific Metrics:
+
+Sensitivity (97.07%) for the "Below" class:
+This high sensitivity means that the model correctly identifies 97.07% of the districts that truly belong to the “Below” category.
+
+Specificity (64.74%) for the "Above" class:
+This indicates that 64.74% of the “Above” districts are correctly classified. The lower specificity suggests that some “Above” cases are being misclassified as “Below.”
+
+Positive and Negative Predictive Values:
+A PPV of 85.77% and an NPV of 90.98% further confirm that both positive and negative predictions are reasonably reliable.
+
+Balanced Accuracy:
+With a balanced accuracy of approximately 80.90, the model shows a good balance between sensitivity and specificity.
+
+Mcnemar’s Test:
+The significant McNemar’s test (p ≈ 2.2e-16) suggests that there is some asymmetry in the misclassifications between the two classes. This might imply that improving the classification of the “Above” category could be an area to focus on further.
+
+Overall Thoughts
+Generalization:
+The OOB error aligns closely with the test set error, implying that overfitting is not a major concern with this model. The model seems to generalize well from the training data to the unseen test data.
+
+Class Imbalance or Difficulty:
+The higher error rate (lower specificity) for the “Above” category might indicate that the features are more predictive of a district being “Below” the national average, or that the “Above” class has more inherent variability. You might experiment with alternative classification thresholds or even consider cost-sensitive learning if distinguishing the “Above” cases becomes critical.
+
+The random forest model demonstrates strong performance with high accuracy and good generalization. Even though the “Above” class presents a slightly higher misclassification rate, overall the model's performance metrics—especially the high sensitivity for the “Below” class and a balanced accuracy of around 80.90%—suggest that your approach is both robust and reliable. This makes your model a promising tool for understanding how variations in school resources and demographics relate to performance compared to the national benchmark.
+
+
+
