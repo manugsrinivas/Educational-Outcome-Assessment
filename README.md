@@ -82,4 +82,5 @@ Gautam, R., McCombs, L., & Pennington, M. (2024). Exploring educational equity i
 A machine learning analysis of K–12 achievement disparities. arXiv preprint arXiv:2402.01710.
 https://arxiv.org/abs/2402.01710
 
-# Please feel free to go through our research paper as well as the slides for the visualizations and indepth analysis of our findings
+# Research Paper and Slides
+Please feel free to go through our research paper as well as the slides for the visualizations and in-depth analysis of our findings. The paper and slides are attached along with the R Markdown files. 
