@@ -3,7 +3,7 @@
 *A regional, classification-based analysis of U.S. K–12 districts using the School Finance Indicators Database (District Cost Database).*
 
 ## Overview
-We study how **school resources** (e.g., funding adequacy) and **district demographics** (e.g., poverty, enrollment, racial/ethnic composition, ELL/IEP shares) relate to a district’s likelihood of performing **above the national average** on standardized tests. We cast the problem as **binary classification**—Above (1) vs. Below (0)—and run parallel models for **Northeast, Midwest, South, and West** to respect regional heterogeneity.
+This was a semester long group project where we study how **school resources** (e.g., funding adequacy) and **district demographics** (e.g., poverty, enrollment, racial/ethnic composition, ELL/IEP shares) relate to a district’s likelihood of performing **above the national average** on standardized tests. We cast the problem as **binary classification**—Above (1) vs. Below (0)—and run parallel models for **Northeast, Midwest, South, and West** to respect regional heterogeneity.
 
 ## Data
 - **Source:** School Finance Indicators Database (SFID) – District Cost Database (DCD), pooled cross-section for ~**2009–2021**.  
